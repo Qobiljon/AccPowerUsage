@@ -2,10 +2,12 @@ package com.example.accpowerusage
 
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.*
+import android.os.Build
+import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val tag = "AccPowerUsage"
+        const val tag = "AcrPowerUsage"
         private const val RC_ACTIVITY_RECOGNITION_PERMISSION = 101
     }
 }

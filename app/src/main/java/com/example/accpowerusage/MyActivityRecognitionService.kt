@@ -8,16 +8,14 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.os.Build
-import android.os.IBinder
-import android.os.VibrationEffect
-import android.os.Vibrator
+import android.os.*
 import android.util.Log
 import com.google.android.gms.location.*
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
 import java.util.*
+
 
 class MyActivityRecognitionService : Service() {
     private lateinit var activityRecognitionClient: ActivityRecognitionClient
@@ -30,20 +28,20 @@ class MyActivityRecognitionService : Service() {
         val pendingIntent = PendingIntent.getActivity(applicationContext, 0, notificationIntent, 0)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationChannelId = "com.example.accpowerusage.MyActivityRecognitionService"
-            val notificationChannelName = "Accelerometer Power Usage Test"
+            val notificationChannelName = "Accelerometer+ACR Power Consumption"
             val notificationChannel = NotificationChannel(notificationChannelId, notificationChannelName, NotificationManager.IMPORTANCE_DEFAULT)
             notificationChannel.lightColor = Color.BLUE
             notificationChannel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(notificationChannel)
-            val notification = Notification.Builder(applicationContext, notificationChannelId).setContentTitle("Accelerometer Power Usage Test").setContentText("Accelerometer data is being collected now...").setSmallIcon(R.mipmap.ic_launcher).setContentIntent(pendingIntent).build()
+            val notification = Notification.Builder(applicationContext, notificationChannelId).setContentTitle("Accelerometer+ACR Power Consumption").setContentText("Accelerometer+ACR data is being collected now...").setSmallIcon(R.mipmap.ic_launcher).setContentIntent(pendingIntent).build()
             try {
                 startForeground(notificationId, notification)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         } else {
-            val notification = Notification.Builder(applicationContext).setContentTitle("Accelerometer Power Usage Test").setContentText("Accelerometer data is being collected now...").setSmallIcon(R.mipmap.ic_launcher).setContentIntent(pendingIntent).build()
+            val notification = Notification.Builder(applicationContext).setContentTitle("Accelerometer+ACR Power Consumption").setContentText("Accelerometer+ACR data is being collected now...").setSmallIcon(R.mipmap.ic_launcher).setContentIntent(pendingIntent).build()
             try {
                 startForeground(notificationId, notification)
             } catch (e: Exception) {
@@ -104,7 +102,6 @@ class ActivityTransitionIntentService : IntentService("ActivityTransitionIntentS
             result!! // development bug
             for (event in result.transitionEvents) {
                 logActivityTransitionEvent(event)
-                Log.e(MainActivity.tag, "${detectedActivityToStr(event.activityType)} -> ${detectedTransitionToStr(event.transitionType)}")
                 vibrate(applicationContext, event.transitionType)
                 when (event.transitionType) {
                     ActivityTransition.ACTIVITY_TRANSITION_ENTER -> if (!accelerometerRecording) sensorManager.registerListener(
@@ -119,9 +116,15 @@ class ActivityTransitionIntentService : IntentService("ActivityTransitionIntentS
     }
 
     private fun logActivityTransitionEvent(event: ActivityTransitionEvent) {
-        val activityWriter = BufferedWriter(FileWriter(File(filesDir, "activityTransitions.csv"), true))
+        Log.e(MainActivity.tag, "${detectedActivityToStr(event.activityType)} -> ${detectedTransitionToStr(event.transitionType)}")
+
+        val activityWriter = BufferedWriter(FileWriter(File(filesDir, "acrLog.csv"), true))
         val timestamp = System.currentTimeMillis() + (event.elapsedRealTimeNanos - System.nanoTime()) / 1000000L
-        activityWriter.write("$timestamp\t${detectedActivityToStr(event.activityType)}\t${detectedTransitionToStr(event.transitionType)}\n")
+
+        val batteryPct = getBatteryPct(applicationContext)
+        Log.e(MainActivity.tag, "Battery: $batteryPct")
+
+        activityWriter.write("$timestamp\t${detectedActivityToStr(event.activityType)}\t${detectedTransitionToStr(event.transitionType)}\t$batteryPct\n")
         activityWriter.close()
     }
 
@@ -164,20 +167,32 @@ class ActivityTransitionIntentService : IntentService("ActivityTransitionIntentS
                 stopperThread = Thread {
                     try {
                         Thread.sleep(durationMs)
-                    } catch (e: InterruptedException) {
-                        Log.e(MainActivity.tag, "stopperThread interrupted")
-                    } finally {
+
                         sensorManager.unregisterListener(this@AccelerometerListener)
                         accelerometerWriter.write('\n'.toInt())
                         accelerometerWriter.close()
                         accelerometerRecording = false
+
+                        val logger = BufferedWriter(FileWriter(File(context.filesDir, "accLog.csv"), true))
+                        val batteryPct = getBatteryPct(context)
+                        logger.write("${System.currentTimeMillis()}\tENDS SENSING\t$batteryPct\n")
+                        logger.close()
+                        vibrate(context, ActivityTransition.ACTIVITY_TRANSITION_EXIT)
+                    } catch (e: InterruptedException) {
+                        Log.e(MainActivity.tag, "stopperThread interrupted")
                     }
-                    vibrate(context, ActivityTransition.ACTIVITY_TRANSITION_EXIT)
+                    return@Thread
                 }
                 stopperThread.start()
                 accelerometerWriter = BufferedWriter(FileWriter(File(context.filesDir, "accelerometer.csv"), true))
                 accelerometerRecording = true
                 Log.e(MainActivity.tag, "sensing accelerometer...")
+
+                val logger = BufferedWriter(FileWriter(File(context.filesDir, "accLog.csv"), true))
+                val batteryPct = getBatteryPct(context)
+                logger.write("${System.currentTimeMillis()}\tSTARTS SENSING\t$batteryPct\n")
+                logger.close()
+                Log.e(MainActivity.tag, "Battery: $batteryPct")
             }
             return this
         }
@@ -205,7 +220,21 @@ class ActivityTransitionIntentService : IntentService("ActivityTransitionIntentS
                 accelerometerWriter.close()
                 accelerometerRecording = false
                 Log.e(MainActivity.tag, "stopped sensing accelerometer...")
+
+                val logger = BufferedWriter(FileWriter(File(context.filesDir, "accLog.csv"), true))
+                val batteryPct = getBatteryPct(context)
+                logger.write("${System.currentTimeMillis()}\tENDS SENSING\t$batteryPct\n")
+                logger.close()
+                Log.e(MainActivity.tag, "Battery: $batteryPct")
             }
+        }
+
+        fun getBatteryPct(context: Context): Int? {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val batLevel = (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                batLevel
+            } else
+                null
         }
     }
 }
